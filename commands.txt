@@ -7,3 +7,7 @@ python feature_subset_optimizer.py    --data datasources/group.parquet    --gene
 python feature_subset_optimizer.py    --data datasources/group.parquet    --generations 300 --population 160    --w1 1.0 --w2 1.0    --min-ls 1 --min-ftds 1 --min-accounts 100    --penalty-per-feature 0.0    --random-seed 42
 
 python feature_subset_optimizer.py    --data datasources/group.parquet    --generations 300 --population 160    --w1 1.0 --w2 1.0    --min-ls 1 --min-ftds 1 --min-accounts 10    --penalty-per-feature 0.0    --random-seed 42
+
+python feature_subset_optimizer.py    --data datasources/group.parquet    --generations 120 --population 80    --w1 1.0 --w2 1.0    --min-ls 1 --min-ftds 1 --min-accounts 10    --penalty-per-feature 0.0    --random-seed 42
+
+python feature_subset_optimizer.py    --data datasources/mfs_synth.parquet    --generations 120 --population 80    --w1 1.0 --w2 1.0    --min-ls 1 --min-ftds 1 --min-accounts 10    --penalty-per-feature 0.0    --random-seed 42

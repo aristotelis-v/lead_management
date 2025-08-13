@@ -51,6 +51,52 @@ def lower_turkish_to_latin(df, column):
 
     return df
 
+def assign_age_group(df: pd.DataFrame, birthdate_col: str = "birthdate") -> pd.DataFrame:
+    """
+    Compute age-group labels into df['age_group_dw'] based on a birthdate column.
+
+    Buckets:
+      - age < 18            -> 'under_18_age'
+      - 18–24               -> '18_24_age'
+      - 25–34               -> '25_34_age'
+      - 35–44               -> '35_44_age'
+      - 45–54               -> '45_54_age'
+      - 55–64               -> '55_64_age'
+      - 65–74               -> '65_74_age'
+      - 75+                 -> '75_plus_age'
+      - invalid / future    -> ''
+    """
+    # Parse to datetime; invalid -> NaT
+    bdate = pd.to_datetime(df[birthdate_col], errors="coerce")
+
+    # Today's date (no time) for precise birthday comparison
+    today = pd.Timestamp.today().normalize()
+
+    # Full years of age
+    before_birthday = (today.month < bdate.dt.month) | (
+        (today.month == bdate.dt.month) & (today.day < bdate.dt.day)
+    )
+    age = (today.year - bdate.dt.year) - before_birthday.astype("Int64")
+
+    # Start with blanks
+    grp = pd.Series("", index=df.index, dtype="string")
+
+    # Valid ages: not null and non-negative
+    valid = age.notna() & (age >= 0)
+
+    grp.loc[valid & (age < 18)] = "under_18_age"
+    grp.loc[valid & age.between(18, 24, inclusive="both")] = "18_24_age"
+    grp.loc[valid & age.between(25, 34, inclusive="both")] = "25_34_age"
+    grp.loc[valid & age.between(35, 44, inclusive="both")] = "35_44_age"
+    grp.loc[valid & age.between(45, 54, inclusive="both")] = "45_54_age"
+    grp.loc[valid & age.between(55, 64, inclusive="both")] = "55_64_age"
+    grp.loc[valid & age.between(65, 74, inclusive="both")] = "65_74_age"
+    grp.loc[valid & (age >= 75)] = "75_plus_age"
+
+    df["age_group_dw"] = grp
+
+    return df
+
 def calculate_ftd_flag(df, column):
 
     df['fx_ftd'] = df[column].notna().astype(int)
@@ -82,10 +128,8 @@ def load_data(start_date: str, end_date: str) -> pd.DataFrame:
             tag1                        detailed_tag,
             googleid                    google_id,
             linkid                      link_id,
+            birthdate,
             descwebsite                 desc_web_site,
-            countryname                 country_name,
-            ipcountryname               ip_country_name,
-            countrycalculated           cl_country_name,
             initialplatform             initial_platform,
             accountlicense              account_license,
             accountstatusname           account_status,
@@ -124,6 +168,8 @@ def load_data(start_date: str, end_date: str) -> pd.DataFrame:
         df = lower_turkish_to_latin(df, 'lead_status')
         
         df = calculate_ftd_flag(df, 'fx_ftd_approved_on')
+
+        df = assign_age_group(df)
 
         df = df.sort_values(by='created_on', ignore_index=True)
 

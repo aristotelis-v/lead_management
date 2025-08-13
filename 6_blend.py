@@ -8,6 +8,7 @@ import logging
 from pathlib import Path
 from functools import lru_cache
 from datetime import datetime, timedelta
+from user_agents import parse
 
 DATASOURCE_DIR = Path("datasources")
 PARQUET_EXT     = ".parquet"
@@ -26,6 +27,72 @@ def load_datasource(name: str, directory: Path = DATASOURCE_DIR, ext: str = PARQ
     except Exception as e:
         logging.error(f"Failed to load parquet {path}: {e!r}")
         raise
+
+def extract_user_agent_details(df: pd.DataFrame, ua_col: str = "lv_user_agent", inplace: bool = True) -> pd.DataFrame:
+    """
+    Parse user-agent strings from df[ua_col] and add columns:
+      - browser, os, os_name, device, device_type
+
+    Parameters
+    ----------
+    df : pd.DataFrame
+        Input DataFrame containing the user-agent column.
+    ua_col : str, default "lv_user_agent"
+        Name of the column with user-agent strings.
+    inplace : bool, default True
+        If True, mutate df. If False, return a new DataFrame with added columns.
+
+    Returns
+    -------
+    pd.DataFrame
+        The mutated df if inplace=True, otherwise a new DataFrame with added columns.
+    """
+
+    def _parse_one(ua_string):
+        if pd.isna(ua_string) or not str(ua_string).strip():
+            return {
+                "browser": "",
+                "os": "",
+                "os_name": "",
+                "device": "",
+                "device_type": "Other"
+            }
+        try:
+            ua = parse(str(ua_string))
+
+            if ua.is_mobile:
+                device_type = "Mobile"
+            elif ua.is_tablet:
+                device_type = "Tablet"
+            elif ua.is_pc:
+                device_type = "Desktop"
+            else:
+                device_type = "Other"
+
+            return {
+                "browser": f"{ua.browser.family} {ua.browser.version_string}".strip(),
+                "os": f"{ua.os.family} {ua.os.version_string}".strip(),
+                "os_name": ua.os.family or "",
+                "device": f"{ua.device.family} (Brand: {ua.device.brand}, Model: {ua.device.model})",
+                "device_type": device_type
+            }
+        except Exception:
+            # Fallback on any parsing error
+            return {
+                "browser": "",
+                "os": "",
+                "os_name": "",
+                "device": "",
+                "device_type": "Other"
+            }
+
+    details = df[ua_col].apply(_parse_one).apply(pd.Series)
+
+    if inplace:
+        df[["browser", "os", "os_name", "device", "device_type"]] = details
+        return df
+    else:
+        return df.join(details)
 
 def has_valid_format(number, region=None):
     try:
@@ -69,7 +136,7 @@ def process_vrfcs(vr: pd.DataFrame) -> pd.DataFrame:
 
 def verify_sms(ld: pd.DataFrame, vr: pd.DataFrame) -> pd.DataFrame:
 
-    ld = ld[['account_id', 'created_on', 'lv_fixed_phone1_gl', 'lv_fixed_phone2_gl', 'lv_fixed_phone1_fb', 'lv_fixed_phone2_fb', 'lc_sms_verification', 'db']].copy()
+    ld = ld[['account_id', 'created_on', 'lv_fixed_phone1_gl', 'lv_fixed_phone2_gl', 'lv_fixed_phone1_fb', 'lv_fixed_phone2_fb', 'lc_sms_verification']].copy()
     vr = vr[['verification_attempt_sid', 'date_created', 'message_status', 'message_status_code', 'verification_status', 'verification_status_code', 'to_hashed']].copy()
 
     ld_melted = ld.melt(id_vars=['account_id'], value_vars=['lv_fixed_phone1_gl', 'lv_fixed_phone2_gl', 'lv_fixed_phone1_fb', 'lv_fixed_phone2_fb'], value_name='to_hashed').rename(columns={'variable': 'phone_label'}).dropna(subset=['to_hashed'])
@@ -119,13 +186,32 @@ def extract_link_parts(df: pd.DataFrame, col: str = "link_id") -> pd.DataFrame:
         .fillna('')
     )
 
-    knowledge_of_trading = (
-        s.str.findall(r'[^,]*knowledge_of_trading[^,]*').str[0]
-        .fillna('')
-        .str.replace(r'yes_a_relevant\w*', 'financial_qualification', regex=True)
-        .str.replace(r'yes_from_a_relevant\w*', 'relevant_role_in_financial_services', regex=True)
-        .str.replace(r'from_previous_tr\w*', 'previous_trading_experience', regex=True)
+    # knowledge_of_trading
+
+    # s is df['link_id']
+    tok = (
+        s.str.extract(r'([^,]*knowledge_of_trading[^,]*)', expand=False)
+         .fillna('')
+         .str.strip()
+         .str.lower()
     )
+
+    # strip the prefix once
+    tail = tok.str.replace(r'^\s*knowledge_of_trading_?', '', regex=True)
+
+    # map many variants in one vectorized pass
+    patterns = {
+        r'^yes_a_r\w*$':        'financial_qualification',
+        r'^yes_from_a_r\w*$':   'role_in_financial_services',
+        r'^yes_from_p\w*$':     'previous_trading_experience',
+        r'^all_the_above$':     'all_the_above',
+        r'^fair$':              'fair',
+        r'^good$':              'good',
+        r'^limited$':           'limited',
+        r'^none$':              'none',
+    }
+
+    knowledge_of_trading = tail.replace(patterns, regex=True)
 
     # OS: hyphenated with letters only OR known OS names
     os_ = (
@@ -143,7 +229,7 @@ def extract_link_parts(df: pd.DataFrame, col: str = "link_id") -> pd.DataFrame:
         'annual_income': annual_income,
         'savings': savings,
         'knowledge_of_trading': knowledge_of_trading,
-        'os': os_,
+        'os_link_id': os_,
     })
 
     # return df.drop(columns=[col]).assign(**out.to_dict(orient='series'))
@@ -186,16 +272,17 @@ def count_demo_trades(df: pd.DataFrame) -> pd.DataFrame:
     return gf
 
 def blend_datasources(db: pd.DataFrame, vr: pd.DataFrame, dw: pd.DataFrame, tp: pd.DataFrame, td: pd.DataFrame) -> pd.DataFrame:
-
+    
     vr = process_vrfcs(vr)
     dr = verify_sms(db, vr)
     dw = extract_link_parts(dw, col="link_id")
     tp = select_proper_tp(tp)
     td = count_demo_trades(td)
 
-    dm = db[['account_id', 'dummy_db_flag']]
+    db = db.drop(columns=['created_on', 'lv_fixed_phone1_gl', 'lv_fixed_phone2_gl', 'lv_fixed_phone1_fb', 'lv_fixed_phone2_fb', 'lc_sms_verification'], errors='ignore')
+    db = extract_user_agent_details(db)
 
-    df = dw.merge(dm, on='account_id', how='left')
+    df = db.merge(dw, on='account_id', how='left')
     df = df.merge(dr, on='account_id', how='left')
     df = df.merge(tp, on='account_pk', how='left')
     df = df.merge(td, on='account_pk', how='left')

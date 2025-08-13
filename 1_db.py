@@ -11,56 +11,78 @@ def load_data(start_date: str, end_date: str) -> pd.DataFrame:
     dbs = ['gcm', 'lc']
     conn_str_template = (
         'DRIVER={{SQL Server}};'
-        'SERVER=10.46.7.166;'
+        'SERVER=10.8.66.75;'
         'DATABASE=crm_{db}_marketing;'
         'UID={user};'
         'PWD={pwd};'
     )
     credentials = {
-        'user': os.getenv('DB_USER', 'marketing_user'),
-        'pwd': os.getenv('DB_PWD', 'Market!23'),
+        'user': os.getenv('DB_USER', 'sa'),
+        'pwd': os.getenv('DB_PWD', 'Leader@123@'),
     }
 
     sql_base = """
-    WITH account AS (
-        SELECT
-            accountid               AS account_id,
-            createdon               AS created_on,
-            lv_fixed_phone1_gl,
-            lv_fixed_phone2_gl,
-            lv_fixed_phone1_fb,
-            lv_fixed_phone2_fb,
-            lc_sms_verification,
-            CASE 
-                WHEN lv_first_co_ownerid IN (
-                    CAST('6546523A-AC21-EB11-80E4-005056972925' AS uniqueidentifier), -- FT Google Camp User
-                    CAST('7FB17431-8D9B-EB11-B81B-D96FDBC6BD2F' AS uniqueidentifier), -- KapitalRS Dummy user
-                    CAST('3ABF7D6C-C683-EF11-B83C-9975671EC6C6' AS uniqueidentifier), -- Dummy Marketing - GCM
-                    CAST('30169DDC-A1F5-EA11-80F4-005056972723' AS uniqueidentifier)  -- GCMForex Google Camp User
-                ) THEN 1
-                ELSE 0
-            END                      AS dummy_db_flag,
-            ?                       AS db
-        FROM accountbase
-        WHERE
-            lv_siteid IN ('3F37DBE2-FCB2-E511-80C6-005056A44066', '2D826510-00B3-E511-80C8-005056A42D66', '4D9FA608-D8D7-E611-80E0-005056974CDF')
-            AND createdon BETWEEN ? AND ?
-            AND lv_contains_test = 0
-            AND lv_created_in_office = 0
-            AND (lv_accountstatus NOT IN (5,6) OR lv_accountstatus IS NULL)
-            {gcm_filter_clause}
-    )
+    WITH
+        account AS (
+            SELECT
+                accountid               AS account_id,
+                createdon               AS created_on,
+                lv_master_countryid     AS lv_master_country_id,
+                lv_fixed_phone1_gl,
+                lv_fixed_phone2_gl,
+                lv_fixed_phone1_fb,
+                lv_fixed_phone2_fb,
+                lc_sms_verification,
+                lv_user_agent,
+                CASE 
+                    WHEN lv_first_co_ownerid IN (
+                        CAST('6546523A-AC21-EB11-80E4-005056972925' AS uniqueidentifier), -- FT Google Camp User
+                        CAST('7FB17431-8D9B-EB11-B81B-D96FDBC6BD2F' AS uniqueidentifier), -- KapitalRS Dummy user
+                        CAST('3ABF7D6C-C683-EF11-B83C-9975671EC6C6' AS uniqueidentifier), -- Dummy Marketing - GCM
+                        CAST('30169DDC-A1F5-EA11-80F4-005056972723' AS uniqueidentifier)  -- GCMForex Google Camp User
+                    ) THEN 1
+                    ELSE 0
+                END                      AS dummy_db_flag,
+                ?                       AS db
+            FROM accountbase
+            WHERE
+                lv_siteid IN (
+                                CAST('3F37DBE2-FCB2-E511-80C6-005056A44066' AS uniqueidentifier),
+                                CAST('2D826510-00B3-E511-80C8-005056A42D66' AS uniqueidentifier),
+                                CAST('4D9FA608-D8D7-E611-80E0-005056974CDF' AS uniqueidentifier)
+                             )
+                AND createdon BETWEEN ? AND ?
+                AND lv_contains_test = 0
+                AND lv_created_in_office = 0
+                AND (lv_accountstatus NOT IN (5,6) OR lv_accountstatus IS NULL)
+                {gcm_filter_clause}
+            ),
+        master_country AS
+            (
+                SELECT DISTINCT
+                    lv_countryid AS id,
+                    lv_shortname AS master_country_code
+                FROM
+                    lv_countrybase
+            )
     SELECT
         account_id,
         created_on,
+        master_country_code,
         lv_fixed_phone1_gl,
         lv_fixed_phone2_gl,
         lv_fixed_phone1_fb,
         lv_fixed_phone2_fb,
         lc_sms_verification,
+        lv_user_agent,
         dummy_db_flag,
         db
-    FROM account
+    FROM
+        account
+    LEFT JOIN
+        master_country
+    ON
+        account.lv_master_country_id = master_country.id
     """
 
     gcm_filter_clause = """

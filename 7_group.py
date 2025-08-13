@@ -87,7 +87,7 @@ if __name__ == "__main__":
 
     cols = [
                 'desc_web_site', 
-                'cl_country_name', 
+                'master_country_code', 
                 'initial_platform', 
                 'account_license', 
                 'account_status', 
@@ -97,7 +97,8 @@ if __name__ == "__main__":
                 'annual_income', 
                 'savings', 
                 'knowledge_of_trading', 
-                'os', 
+                'os_name', 
+                'device_type',
                 'sms_verification', 
                 'demo_trade_flag', 
                 'self_reg_real', 
